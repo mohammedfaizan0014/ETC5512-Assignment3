@@ -1,0 +1,838 @@
+---
+title: "Data deidentification and modification"
+subtitle: "ETC5512 Assignment 3, Master of Business Analytics"
+author: "Prepared by Mohammed Faizan, 31939872, mfai0014@student.monash.edu"
+date: '`r Sys.Date()`'
+output: 
+  html_document:
+    css: monashreport.css
+    includes:
+      before_body: header.html
+bibliography: 
+- packages.bib
+biblio-style: authoryear-comp
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      messages = FALSE, 
+                      warning = FALSE)
+library(tidyverse)
+library(readr)
+library(kableExtra)
+library(bookdown)
+library(naniar)
+library(visdat)
+library(citation)
+library(knitr)
+library(glue)
+library(unglue)
+library(readxl)
+library(tidytext)
+library(haven)
+library(forcats)
+library(lubridate)
+```
+
+```{r writing_packages_bibliographies, include=FALSE}
+knitr::write_bib(c(.packages()), "packages.bib")
+```
+
+# 🔍 Analysis
+
+```{r}
+survey0 <- read_rds(here::here("raw_data/survey_data.rds"))
+```
+
+
+## Identify and remove the **direct identifiers** from the data.
+
+Records are not being shuffled so that the data custodian can verify the atomicity/correctness of the records in the published data.
+
+```{r}
+survey1 <- survey0 %>%
+  select(-c(IPAddress,ResponseID,ResponseFirstName, ResponseLastName, QID28)) 
+
+#shuffling rows so that it does not match original raw_data order.
+set.seed(321)
+rndm_order <- sample(nrow(survey1))
+#survey1 <- survey1[rndm_order,] not shuffling so that the data custodian can verify the atomicity/correctness of the records in the published data.
+```
+
+## De-identification strategy
+
+```{r}
+#converting to required data types
+
+survey1 <- survey1 %>%
+  mutate(
+    StartDate = ymd(StartDate),
+    EndDate = ymd(EndDate),
+    Duration = as.numeric(Duration),
+    RecordedDate = ymd(RecordedDate),
+    QID6 = as.numeric(QID6),
+    QID7 = as.numeric(QID7),
+    QID8 = as.numeric(QID8),
+    QID19 = as.numeric(QID19),
+    QID21 = as.numeric(QID21),
+    QID22 = as.numeric(QID22)
+  )
+```
+```{r}
+#imputing missing demographics for unfilled forms
+survey2 <- survey1 %>%
+  mutate(QID6=case_when(Progress<10  ~ median(QID6, na.rm = TRUE),
+                        TRUE ~ QID6),
+         QID7=case_when(Progress<10 ~ median(QID7, na.rm = TRUE),
+                        TRUE ~ QID7),
+         QID8=case_when(Progress<10 ~ median(QID8, na.rm = TRUE),
+                        TRUE ~ QID8),
+         QID15=case_when(Progress<10 ~ median(QID15, na.rm = TRUE),
+                        TRUE ~ QID15)
+         )
+```
+```{r}
+survey3 <- survey2 %>%
+  mutate(age_group = as.character(cut(QID6,breaks = c(21,40,60,88)))) %>%  #generalization
+  mutate(income = QID22 + rnorm(n(),0,5000)) %>% #perturbation
+  mutate(income2019 = ifelse(income>200000, 220000, income)) %>% #top coding
+  mutate(income2019 = case_when(income2019<30000 ~ 30000,
+                                      TRUE ~ income2019)) %>% #bottom coding
+   mutate(income2019 = case_when(
+     income2019==30000 ~ income2019 + rnorm(n(),0,2000),
+     income2019==220000 ~ income2019 + rnorm(n(),0,10000),
+       TRUE ~ income2019                               
+     )) %>% #perturbation
+  mutate(income2020 = case_when(
+     QID21<30000 & QID21!=0 ~ 30000 + rnorm(n(),0,2000),
+     QID21>200000 ~ 220000 + rnorm(n(),0,10000),
+     QID21!=0 ~ QID21 + rnorm(n(),0,500),
+     TRUE ~ QID21
+     )) %>% #perturbation
+  mutate(income2021 = case_when(
+     QID19<30000 & QID19!=0 ~ 30000 + rnorm(n(),0,2000),
+     QID19>200000 ~ 220000 + rnorm(n(),0,10000),
+     QID19!=0 ~ QID19 + rnorm(n(),0,500),
+     TRUE ~ QID19
+     ))
+```
+```{r}
+#generalization
+survey4 <- survey3 %>%
+  mutate(LocationLongitude = round(LocationLongitude, 0),
+    LocationLatitude=round(LocationLatitude,0))
+```
+
+
+```{r}
+# postcode is not important for the analysis. 
+#many ones. best option swapping
+survey5 <- survey4 %>%
+    group_by(LocationLongitude, LocationLatitude) %>%
+mutate(postal_code = sample(QID15,n(),replace = TRUE)) %>%
+  ungroup()
+
+```
+
+```{r}
+# de-identifying unfinished records
+set.seed(109)
+survey6 <- survey5 %>%
+  mutate(StartDate = case_when(Progress!=100 ~ sample(StartDate,n(),replace = TRUE),
+                               TRUE ~ StartDate),
+         Progress = case_when(Progress!=100 ~ round(Progress + rnorm(n(),0,6.2),1),
+                              TRUE ~ Progress))
+
+```
+
+```{r}
+#removing original variables
+survey7 <- survey6 %>%
+  select(-c(QID6, QID22, QID21, QID19, QID15, income))
+```
+
+
+
+
+## Check strategy
+
+The published data is de-identified with respect to the demographics of the participants owing to the ethical responsibility and to comply with the Australian Privacy Principles (APPs) in the Privacy Act 1988. Ethics is a balance of risk and benefit. In this case the risk of identification is balanced with the utility of the data with respect to mental health, financial stability and home life.
+
+There are complete forms and incomplete forms. However out of 1000 records, there are only 21 incomplete forms. The records of incomplete forms are listed below. Usually start date is same as end date however there are 29 participants with different start and end day and 16 people have unique start and end date that is different. all values were recorded on end date.
+
+
+```{r}
+#finished=0
+finished0 <- survey0  %>% filter(Finished == "0") #date not linked to finish status and 21 unfinished form.
+q28na <- survey0  %>% filter(is.na(QID28)) #incomplete form when QID28 is not provided.
+
+# survey0  %>% filter(Finished == "0") %>% right_join(survey0  %>% filter(is.na(QID24_1))) %>% view()
+# 
+# survey0  %>% filter(Finished == "0") %>% anti_join(survey0  %>% filter(is.na(QID24_1))) %>% view()
+```
+```{r echo=FALSE}
+finished0 %>% 
+  knitr::kable(caption="Unfinished Forms",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+```
+
+
+```{r}
+#usually start date is same as end date however there are 29 participants with different start and end day
+stnotend <- survey1  %>% filter(StartDate != EndDate) 
+unique(stnotend$StartDate)
+unique(stnotend$EndDate) #16 people have unique start and end date that is different.
+
+recordnotend <- survey0  %>% filter(RecordedDate != EndDate) # all values recorded same as end day.
+
+```
+
+```{r}
+#All participants have agreed to informed consent
+q29 <- unique(survey0$QID29) #answer=1
+pct_miss(survey0$QID29)  #0
+```
+
+
+In order to de-identify the records with unfinished status and to make the data more usable imputation was done to the demographic variables QID6, QID7, QID8 and QID15 for missing values. this was necessary because only one record with finished = 0 and progress = 0 existed. And other participants who did not submit the form would have identified themselves, especially when progress was low based on some combination of variables, especially income and age.
+
+```{r echo=FALSE}
+#in order to de-identify the records with unfinished status and to make the data more usable imputation was done to the demographic variables QID6, QID7, QID8 and QID15 for missing values. this was necesarry because only one record with finished = 0 and progress=0 existed. And other participants who did not submit the form would have identified themselves, especially when progress was low based on some combination of variables, especially income and age.
+
+# one participant with no progress
+survey1 %>% filter(Progress==0) %>% 
+  knitr::kable(caption="Unfinished Forms",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+survey1 %>% filter(Progress<30) %>% 
+  knitr::kable(caption="Unfinished Forms",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+
+#17 identifiable records
+# survey1 %>%
+#   filter(Progress!=100) %>%
+#   group_by(Progress, QID6) %>%
+#   mutate(Freq = n()) %>%
+#   ungroup() %>%
+#   filter(Freq == 1) %>% 
+#   knitr::kable(caption="Unfinished Forms",booktabs = TRUE) %>% 
+#   kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+```
+
+
+Following steps were taken to de-identify the unfinished form records.
+
+```{r eval=FALSE}
+#following steps were taken to de-identify the unfinished form records 
+
+#imputing missing demographics for unfilled forms
+survey2 <- survey1 %>%
+  mutate(QID6=case_when(Progress<10  ~ median(QID6, na.rm = TRUE),
+                        TRUE ~ QID6),
+         QID7=case_when(Progress<10 ~ median(QID7, na.rm = TRUE),
+                        TRUE ~ QID7),
+         QID8=case_when(Progress<10 ~ median(QID8, na.rm = TRUE),
+                        TRUE ~ QID8),
+         QID15=case_when(Progress<10 ~ median(QID15, na.rm = TRUE),
+                        TRUE ~ QID15)
+         )
+```
+
+There are still 17 identifiable records, however missing demographics have been filled, therefore in part these records may not be identifiable. However on a closer look these records are indeed identifiable based on the age, start date and other non demographic variables.
+
+```{r echo=FALSE}
+survey2 %>%
+  filter(Progress!=100) %>%
+  group_by(Progress, QID6) %>%
+  mutate(Freq = n()) %>%
+  ungroup() %>%
+  filter(Freq == 1) %>% 
+  knitr::kable(caption="Unfinished Forms",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+```
+
+Following the above observation this step was necessary and start dates were swapped only for unfinished forms as the end date is empty for unfinished forms and further progress was perturbed to de-identify records based on start date, finish status and progress.
+
+```{r eval=FALSE}
+#folowing the above observation this step was necessary and start dates were swapped only for unfinished forms as the end date is empty for unfinished forms and further progress was perturbed to deidentify records based on start date, finish status and progress.
+# de-identifying unfinished records
+set.seed(109)
+survey6 <- survey5 %>%
+  mutate(StartDate = case_when(Progress!=100 ~ sample(StartDate,n(),replace = TRUE),
+                               TRUE ~ StartDate),
+         Progress = case_when(Progress!=100 ~ round(Progress + rnorm(n(),0,6.2),1),
+                              TRUE ~ Progress))
+```
+
+It was seen that there are unique records when age is combined with other variables. Hence age needed to be genralized to solve this identification risk.
+
+```{r echo=FALSE}
+
+#it is seen that there are unique records when age is combined with other variables. Hence age needs to be genralised to solve this identification risk.
+ageadult <- survey0 %>% count(QID6, QID7) # many n=1 however generalising  age groups will not cause this
+agechildren <- survey0 %>% count(QID6, QID8) # many n=1 however generalising  age groups will not cause this
+
+agepost <- survey0 %>% count(QID6, QID15) %>% arrange(QID15)
+```
+
+```{r echo=TRUE}
+ageadult %>%
+  filter(n==1) %>%
+    head() %>%
+  knitr::kable(caption="Age and Adults",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+
+agechildren %>%
+    filter(n==1) %>%
+    head() %>%
+  knitr::kable(caption="Age and Children",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+
+agepost %>%
+    filter(n==1) %>%
+    head() %>%
+  knitr::kable(caption="Age and Postal Code",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+```
+
+Records are identifiable where income is very high or very low and the combination of age and income. For example a young participant with high income is identifiable, participant abouve 80 are identifiable and so is the person with highest and lowest income. Also people tend to remeber their incomes.
+
+```{r echo=TRUE}
+survey0 %>%
+  ggplot() +
+  geom_point(aes(x=QID6, y=QID22)) + #TOP BOTTOM CODING SOLVES >200000 POINTS ARE HANDLED, FOR AGE 88
+  ggtitle("Age vs Income2019")
+
+survey0 %>%
+  ggplot() +
+  geom_point(aes(x=QID6, y=QID21)) +
+  ggtitle("Age vs Income2020")
+  
+
+survey0 %>%
+  ggplot() +
+  geom_point(aes(x=QID6, y=QID19)) +
+    ggtitle("Age vs Income2021")
+
+
+```
+
+This problem was solved by a series of generalization, perturbation and top and bottom coding.
+
+```{r eval=FALSE}
+#this problem is solved by a series of generalization, perturbation and top and bottom coding.
+survey3 <- survey2 %>%
+  mutate(age_group = as.character(cut(QID6,breaks = c(21,40,60,88)))) %>%  #generalization
+  mutate(income = QID22 + rnorm(n(),0,5000)) %>% #perturbation
+  mutate(income2019 = ifelse(income>200000, 220000, income)) %>% #top coding
+  mutate(income2019 = case_when(income2019<30000 ~ 30000,
+                                      TRUE ~ income2019)) %>% #bottom coding
+   mutate(income2019 = case_when(
+     income2019==30000 ~ income2019 + rnorm(n(),0,2000),
+     income2019==220000 ~ income2019 + rnorm(n(),0,10000),
+       TRUE ~ income2019                               
+     )) %>% #perturbation
+  mutate(income2020 = case_when(
+     QID21<30000 & QID21!=0 ~ 30000 + rnorm(n(),0,2000),
+     QID21>200000 ~ 220000 + rnorm(n(),0,10000),
+     QID21!=0 ~ QID21 + rnorm(n(),0,500),
+     TRUE ~ QID21
+     )) %>% #perturbation
+  mutate(income2021 = case_when(
+     QID19<30000 & QID19!=0 ~ 30000 + rnorm(n(),0,2000),
+     QID19>200000 ~ 220000 + rnorm(n(),0,10000),
+     QID19!=0 ~ QID19 + rnorm(n(),0,500),
+     TRUE ~ QID19
+     ))
+```
+
+Now, records cannot be identified based on age.
+
+```{r}
+#records cannot be identified based on age.
+survey3 %>%
+  filter(Progress!=100) %>%
+  group_by(age_group) %>%
+  mutate(Freq = n()) %>%
+  ungroup() %>%
+  filter(Freq == 1) %>%
+    head() 
+
+```
+
+
+These are the records with this combination that occur only once in the data. however, income is perturbed and top and bottom coded and hence it is difficult for a specific person to identify himself. A participant cannot identify himself/herself accurately and can only identify with a low probability that the guess is correct since the start dates have been swapped and progress is also perturbed.
+
+```{r}
+survey3 %>%
+  filter(Progress!=100) %>%
+  group_by(age_group,income2019,income2020,income2021) %>%
+  mutate(Freq = n()) %>%
+  ungroup() %>%
+  filter(Freq == 1) %>%
+  head() %>%
+  knitr::kable(caption="age_group,income2019,income2020,income2021",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+```
+
+There is uncertainty with respect to the income and age due to perturbation and top and bottom coding of income. There are empty values in income2019 nor are there zeroes. However, there is emptiness and zeroes in income2020 and income 2021. Incomes which were zero/empty are not modified as these incomes are an indicator of financial stability and represents the impact of covid 19 and the pandemic.
+
+Unusual growth in income not seen explicitly and if the income goes down to zero, there are multiple records with the same trend and with the incomes being coded and perturbed, a participant can only identify himself with a low probability that the guess is correct.
+```{r echo=FALSE}
+incomemax <- survey3 %>% filter(QID22>200000) %>%
+  select(c(id_number,age_group, income2019,income2020,income2021))
+incomemin <- survey3 %>% filter(QID22<40000) %>%
+  select(c(id_number,age_group, income2019,income2020,income2021)) 
+```
+
+```{r echo=TRUE}
+
+incomemax %>%
+  head() %>%
+  knitr::kable(caption="High income records",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+
+incomemin %>%
+  head() %>%
+  knitr::kable(caption="Low income records",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+
+
+survey3 %>%
+  ggplot() +
+  geom_point(aes(x=QID6, y=income2019))+
+    ggtitle("Age vs Income2019")
+
+survey3 %>%
+  ggplot() +
+  geom_point(aes(x=QID6, y=income2020))+
+    ggtitle("Age vs Income2020")
+
+survey3 %>%
+  ggplot() +
+  geom_point(aes(x=QID6, y=income2021))+
+    ggtitle("Age vs Income2021")
+```
+
+The analysis below suggests that records cannot be identified based on the changes in incomes from 2019 to 2021.
+
+```{r}
+income000 <- survey0 %>% filter(QID22 == 0 & QID21 == 0 & QID19 == 0)
+income001 <- survey0 %>% filter(QID22 == 0 & QID21 == 0) # no 0 in 2019
+
+#29 participants with both income2020 and income2021=0, however there are multiple such records for comparative incomes.
+income100 <- survey0 %>% filter(QID19 == 0 & QID21 == 0) 
+
+income010 <- survey0 %>% filter(QID19 == 0 & QID22 == 0) # no records
+
+#100 participants with both income2021=0, however there are multiple such records for comparative incomes. 312 only one with finish = 0 and income20&21=0
+income110 <- survey0 %>% filter(QID19 == 0) 
+
+
+#261 participants with both income2020=0, however there are multiple such records for comparative incomes.
+income101 <- survey0 %>% filter(QID21 == 0)
+
+#Hence records cannot be identified based on the change in incomes from 2019 to 2021.
+```
+
+
+It can be seen that many there are unique postal codes to many of the participants and postal code is not important as much as the longitude and latitude coordinates, Therefore the postal code have been swapped to de-identify participants based on postal codes.
+
+```{r echo=FALSE}
+q15 <- survey0 %>% group_by(QID15) %>% count(QID15) %>% arrange(n)
+q15only1 <- q15 %>% filter(n %in% c("1","2","3", "5")) %>% arrange(n)
+postcodeagegrp <- survey3 %>% count(age_group, QID15) #manyones. best option swapping
+
+q15only1 %>%
+  filter(n==1) %>%
+  head() %>%
+  knitr::kable(caption="Postal Codes Count",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+
+postcodeagegrp %>%
+    head() %>%
+  filter(n==1) %>%
+  knitr::kable(caption="Postal Codes and Age",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+```
+
+```{r eval=FALSE}
+# postcode is not important for the analysis. 
+#many ones. best option swapping
+survey5 <- survey4 %>%
+    group_by(LocationLongitude, LocationLatitude) %>%
+mutate(postal_code = sample(QID15,n(),replace = TRUE)) %>%
+  ungroup()
+```
+
+
+The longitude and latitude coordinates privided in the raw_data are precise and thus participants are indentifiable with respect to these coordinates. However, these coordinates are very much essential to analyze the data spatially, hence these coordinates are rounded to their integer values and thus represent data records for 110 km radius.
+
+```{r eval=FALSE}
+
+#generalization
+survey4 <- survey3 %>%
+  mutate(LocationLongitude = round(LocationLongitude, 0),
+    LocationLatitude=round(LocationLatitude,0))
+
+```
+
+After applying all the de-identification strategies step by step there are however two records that are identifiable. The only participant in age group (60,88] with 5 adults in the household and the only participant in age group (21,40] with 4 children in the household. However, it would be very difficult to identify these records as the postal codes were swapped, incomes were perturbed and top and bottom coded and as such only a probability will be associated with the identification of these records. I did want to swap these variables for the utility of the data would be compromised owing to the fact that the home life and mental health is actually affected by the children and adults in any household. Swapping closely will however deiidentify these 2 records. "adultchildrenswap" contains the fully de-identified data.
+```{r}
+survey7 %>%
+  group_by(age_group,QID7) %>%
+  mutate(Freq = n()) %>%
+  ungroup() %>%
+  filter(Freq == 1) %>%
+  knitr::kable(caption="age_group, adults",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+
+survey7 %>%
+  group_by(age_group,QID8) %>%
+  mutate(Freq = n()) %>%
+  ungroup() %>%
+  filter(Freq == 1) %>%
+  knitr::kable(caption="age_group, children",booktabs = TRUE) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), latex_options = "hold_position")
+```
+
+```{r}
+adultchildrenswap <-survey7 %>%
+  group_by(age_group) %>%
+  mutate(QID7 = sample(QID7,n(),replace = TRUE)) %>%
+  mutate(QID8 = sample(QID8,n(),replace = TRUE)) %>%
+  ungroup()
+```
+
+
+
+## Computer readable structure
+
+An important understanding of this published data is that it conforms to the tidy data definition: each variable is in its own column, each observation is in its own row and each value is in its own cell. Owing to this norm, multiple records exist for the same participant. Therefore for each participant the income occurs for 3 years, 2019, 2020 and 2021; the combination of "workfromhome", "hrperweek",  
+"wrkschedulestability" and "mentalhealth" occur twice, each for the year 2019 and 2020; "wrktimechoice" occurs ten times(five for each year, 2019 and 2020); and "homelife" occurs twelve times(six for each year, 2019 and 2020). Therefore there are 3x5x6, 90 records for each participant and redundancy must be considered accordingly. Additionally,  "wrktimechoiceeoption" and "homelife" is provided to refer if that option was selected by the participant for  "wrktimechoice"and "homelife" respectively. If an option was selected then the option number is the value otherwise 0. An important  understanding here while filtering records here is to understand that there are participants who have not responded to any of the options and therefore for that particular year, all of the options( [1,5] for "wrktimechoice" and [1,6] for "homelife") will be 0 which is equivalent to NA, that is, this question was not answered by the participant. On the other hand, a participant had answered the question if any one of the option is not 0. 
+
+All records are true with respect to the original survey data apart from the few perturbations and swapping in the demographics section that was done to de-identify the data. No new or faulty records exist in the data. This can be verified by checking with respect to the id_number which is same in both datasets. Ideally, the id_number also had to be reordered, it however present to validate the correctness of the published data.
+
+
+```{r}
+survey8 <- survey7 %>% #pivoting income in 3 years
+  rename(`2019` = income2019,
+         `2020` = income2020,
+         `2021` = income2021) %>%
+  pivot_longer(cols = c(`2019`, `2020`, `2021`),
+               names_to = "year",
+               values_to = "income") %>% #12,10
+  rename(`2019` = QID12,                   
+         `2020` = QID10,) %>%
+  pivot_longer(cols = c(`2019`, `2020`),
+               names_to = "workfromhome",
+               values_to = "option") %>%
+  mutate(workfromhome=case_when(year==2021 ~ year,
+         TRUE ~ workfromhome)) %>%
+  filter(year == workfromhome) %>%
+  mutate(workfromhome=as.character(option)) %>%
+  mutate(workfromhome=case_when(year==2021 ~ "NA",
+                                TRUE ~ workfromhome)) %>% 
+  replace_with_na_at(.vars = c("workfromhome"),
+                     condition = ~.x == "NA") %>%
+  select(-option) %>%
+  distinct() %>%                      #14,16
+  rename(`2019` = QID14,
+         `2020` = QID16,) %>%
+  pivot_longer(cols = c(`2019`, `2020`),
+               names_to = "hrperweek",
+               values_to = "option") %>%
+  mutate(hrperweek=case_when(year==2021 ~ year,
+         TRUE ~ hrperweek)) %>%
+  filter(year == hrperweek) %>%
+  mutate(hrperweek=as.character(option)) %>%
+  mutate(hrperweek=case_when(year==2021 ~ "NA",
+                                TRUE ~ hrperweek)) %>% 
+  replace_with_na_at(.vars = c("hrperweek"),
+                     condition = ~.x == "NA") %>%
+  select(-option) %>%
+  distinct() %>%                      #20,23
+  rename(`2019` = QID20,
+         `2020` = QID23,) %>%
+  pivot_longer(cols = c(`2019`, `2020`),
+               names_to = "wrkschedulestability",
+               values_to = "option") %>%
+  mutate(wrkschedulestability=case_when(year==2021 ~ year,
+         TRUE ~ wrkschedulestability)) %>%
+  filter(year == wrkschedulestability) %>%
+  mutate(wrkschedulestability=as.character(option)) %>%
+  mutate(wrkschedulestability=case_when(year==2021 ~ "NA",
+                                TRUE ~ wrkschedulestability)) %>% 
+  replace_with_na_at(.vars = c("wrkschedulestability"),
+                     condition = ~.x == "NA") %>%
+  select(-option) %>%
+  distinct() %>%                      #26,27
+  rename(`2019` = QID26,
+         `2020` = QID27,) %>%
+  pivot_longer(cols = c(`2019`, `2020`),
+               names_to = "mentalhealth",
+               values_to = "option") %>%
+  mutate(mentalhealth=case_when(year==2021 ~ year,
+         TRUE ~ mentalhealth)) %>%
+  filter(year == mentalhealth) %>%
+  mutate(mentalhealth=as.character(option)) %>%
+  mutate(mentalhealth=case_when(year==2021 ~ "NA",
+                                TRUE ~ mentalhealth)) %>% 
+  replace_with_na_at(.vars = c("mentalhealth"),
+                     condition = ~.x == "NA") %>%
+  select(-option) %>%
+  distinct()
+ 
+
+#3000 records created. 
+```
+
+```{r}
+
+#takes time to execute
+survey9 <- survey8 %>%  #17,18
+  rename(`2019_1`= QID17_1,
+         `2019_2`= QID17_2,
+         `2019_3`= QID17_3,
+         `2019_4`= QID17_4,
+         `2019_5`= QID17_5,
+         `2020_1`= QID18_1,
+         `2020_2`= QID18_2,
+         `2020_3`= QID18_3,
+         `2020_4`= QID18_4,
+         `2020_5`= QID18_5
+         ) %>%
+  pivot_longer(cols = c(starts_with("20")),
+               names_to = "wrktimechoice",
+               values_to = "option") %>%
+  separate(col = wrktimechoice,
+           into = c("tempyear","wrktimechoice"),
+           sep = "_") %>%
+  mutate(tempyear=case_when(year==2021 & tempyear==2019 ~ year,
+         TRUE ~ tempyear),
+         option=as.character(option)) %>%
+  mutate(wrktimechoice=case_when(year==2021 ~ "NA",
+                                TRUE ~ wrktimechoice),
+         option=case_when(year==2021 ~ "NA",
+                                TRUE ~ option)) %>% 
+  replace_with_na_at(.vars = c("wrktimechoice","option"),
+                     condition = ~.x == "NA") %>%
+  mutate(option=as.integer(option)) %>%
+  mutate(wrktimechoice=case_when(option==0 ~ "0",
+                                 TRUE ~ wrktimechoice)) %>%
+  filter(year == tempyear) %>%
+  mutate(wrktimechoice=case_when(is.na(option) ~ "NA",
+                                 TRUE ~ wrktimechoice)) %>%
+  replace_with_na_at(.vars = c("wrktimechoice"),
+                     condition = ~.x == "NA") %>% 
+  mutate(wrktimechoice=as.character(wrktimechoice)) %>%
+  arrange(id_number) %>%
+  select(-c(tempyear,option))
+
+survey10 <- survey9%>%
+  mutate(wrktimechoiceoption=as.character(rep(1:5, 3000)))
+
+#15000 records created
+```
+
+
+```{r}
+#takes time to execute
+survey11 <- survey10 %>%  #17,18
+  rename(`2019_1`=QID24_1,
+         `2019_2`=QID24_2,
+         `2019_3`=QID24_3,
+         `2019_4`=QID24_4,
+         `2019_5`=QID24_5,
+         `2019_6`=QID24_6,
+         `2020_1`=QID25_1,
+         `2020_2`=QID25_2,
+         `2020_3`=QID25_3,
+         `2020_4`=QID25_4,
+         `2020_5`=QID25_5,
+         `2020_6`=QID25_6
+         ) %>%
+  pivot_longer(cols = c(starts_with("20")),
+               names_to = "homelife",
+               values_to = "option") %>%
+  separate(col = homelife,
+           into = c("tempyear","homelife"),
+           sep = "_") %>%
+  mutate(tempyear=case_when(year==2021 & tempyear==2019 ~ year,
+         TRUE ~ tempyear),
+         option=as.character(option)) %>%
+  mutate(homelife=case_when(year==2021 ~ "NA",
+                                TRUE ~ homelife),
+         option=case_when(year==2021 ~ "NA",
+                                TRUE ~ option)) %>% 
+  replace_with_na_at(.vars = c("homelife","option"),
+                     condition = ~.x == "NA") %>%
+  mutate(option=as.integer(option)) %>%
+  mutate(homelife=case_when(option==0 ~ "0",
+                                 TRUE ~ homelife)) %>%
+  filter(year == tempyear) %>%
+  mutate(homelife=case_when(is.na(option) ~ "NA",
+                                 TRUE ~ homelife)) %>%
+  replace_with_na_at(.vars = c("homelife"),
+                     condition = ~.x == "NA") %>% 
+  mutate(homelife=as.character(homelife)) %>%
+  arrange(id_number) %>%
+  select(-c(tempyear,option))
+
+#90000 records created
+```
+
+```{r}
+#takes time to execute
+survey12 <- survey11 %>%
+  mutate(homelife=case_when(is.na(wrktimechoice) ~ "NA",
+                                 TRUE ~ homelife)) %>%
+   replace_with_na_at(.vars = c("homelife"),
+                     condition = ~.x == "NA") %>% 
+  mutate(homelife=case_when(id_number %in% c(163,365,417) ~ "NA",
+                                 TRUE ~ homelife)) %>%
+   replace_with_na_at(.vars = c("homelife"),
+                     condition = ~.x == "NA") 
+  
+```
+```{r}
+survey13 <- survey12%>%
+  mutate(homelifeoption=as.character(rep(1:6, 15000)),
+         wrktimechoiceoption=as.character(wrktimechoiceoption))
+```
+
+
+```{r}
+survey14 <- survey13 %>% 
+  rename(informed_consent=QID29,
+         adultcount=QID7,
+         childcount=QID8)
+
+colorder <- c(1:10,13,11,12,14,15:18,21,22,19,23,24,20)
+survey15 <- survey14[,colorder]
+```
+
+Recoding factor levels
+
+```{r}
+survey16 <- survey15 %>%
+  mutate(workfromhome = fct_recode(workfromhome, 
+                                   "Didn’t work in this year"="0",
+                                   "Didn’t work in this year"="1",
+                                   Never = "2",
+                                   Sometimes = "3",
+                                   "About half the time" = "4",
+                                   "Most of the time" = "5",
+                                   Always = "6"
+                                   ),
+         hrperweek = fct_recode(hrperweek, 
+                                   "Didn’t work in this year"="0",
+                                   "Didn’t work in this year"="1",
+                                   "less than 10 hours" = "2",
+                                   "10-20 hours" = "3",
+                                   "20-30 hours" = "4",
+                                   "30-40 hours" = "5",
+                                   "40+ hours" = "6"
+                                   ),
+         wrktimechoice = fct_recode(wrktimechoice, 
+                                   "Traditional work hours (9-5, Mon - Fri)"="1",
+                                   "Early mornings (5am - 9am)" = "2",
+                                   "Early evenings (5pm - 9pm)" = "3",
+                                   "Late evenings (5pm - midnight)" = "4",
+                                   "Overnight (midnight - 5am)" = "5",
+                                   ),
+         wrktimechoiceoption = fct_recode(wrktimechoiceoption, 
+                                   "Traditional work hours (9-5, Mon - Fri)"="1",
+                                   "Early mornings (5am - 9am)" = "2",
+                                   "Early evenings (5pm - 9pm)" = "3",
+                                   "Late evenings (5pm - midnight)" = "4",
+                                   "Overnight (midnight - 5am)" = "5",
+                                   ),
+         wrkschedulestability = fct_recode(wrkschedulestability, 
+                                   "No changes"="1",
+                                   "Some small changes" = "2",
+                                   "Varying" = "3",
+                                   "Unpredictable" = "4",
+                                   ),
+         homelife = fct_recode(homelife, 
+                                   "Comfortable"="1",
+                                   "Lonely" = "2",
+                                   "Active" = "3",
+                                   "Connected" = "4",
+                                   "Peaceful" = "5",
+                                   "Chaotic" = "6"
+                                   ),
+         homelifeoption = fct_recode(homelifeoption, 
+                                   "Comfortable"="1",
+                                   "Lonely" = "2",
+                                   "Active" = "3",
+                                   "Connected" = "4",
+                                   "Peaceful" = "5",
+                                   "Chaotic" = "6"
+                                   ),
+         mentalhealth = fct_recode(mentalhealth, 
+                                   "Good"="1",
+                                   "Some challenges" = "2",
+                                   "Significant challenges" = "3"
+                                   )
+         )
+```
+
+
+
+
+
+## Save data in a csv form in the data folder
+
+```{r}
+write.csv(survey16, here::here("data/release-data-Mohammed-Faizan.csv"))
+```
+```{r}
+datadict <- read_excel(here::here("raw_data/datadictionary_etc5512_assignment3.xlsx"), sheet=1)
+codebook <- read_excel(here::here("raw_data/datadictionary_etc5512_assignment3.xlsx"), sheet=2)
+
+write.csv(datadict, here::here("data/data-dictionary-Mohammed-Faizan.csv"))
+write.csv(codebook, here::here("data/codebook-Mohammed-Faizan.csv"))
+```
+
+
+
+
+## Resources
+
+### Survey Data Source
+
+- "Kennedy L.A., (2021).  Simulated Data Survey"
+
+### R packages
+
+@R-base
+@R-bookdown
+@R-citation
+@R-dplyr,
+@R-forcats,
+@R-readxl
+@R-tidytext
+@R-haven
+@R-glue
+@R-unglue
+@R-ggplot2,
+@R-kableExtra,
+@R-knitr,
+@R-naniar,
+@R-purrr,
+@R-readr,
+@R-stringr,
+@R-tibble,
+@R-tidyr,
+@R-tidyverse,
+@R-visdat,
+@bookdown2016,
+@ggplot22016,
+@knitr2015,
+@knitr2014,
+@tidyverse2019,
+@visdat2017
+@R-forcats
+
+

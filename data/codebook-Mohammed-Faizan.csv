@@ -1,0 +1,33 @@
+"","variable name","Factor Level","Factor Description","Number of Participants 2019","Number of Participants 2020"
+"1","workfromhome",1,"Didn’t work in 2019 (1)",19,307
+"2","workfromhome",2,"Never  (2) ",596,121
+"3","workfromhome",3,"Sometimes  (3) ",76,56
+"4","workfromhome",4,"About half the time  (4) ",81,49
+"5","workfromhome",5,"Most of the time  (5) ",72,37
+"6","workfromhome",6,"Always  (6) ",147,421
+"7","hrperweek",1,"didn't work in 2019  (1) ",71,542
+"8","hrperweek",2,"less than 10 hours  (2) ",72,93
+"9","hrperweek",3,"10-20 hours  (3) ",84,53
+"10","hrperweek",4,"20-30 hours  (4) ",88,56
+"11","hrperweek",5,"30-40 hours  (5) ",87,54
+"12","hrperweek",6,"40+ hours  (6) ",587,191
+"13","wrktimechoice",1,"Traditional work hours (9-5, Mon - Fri)  (1) ",786,302
+"14","wrktimechoice",2,"Early mornings (5am - 9am)  (2) ",93,73
+"15","wrktimechoice",3,"Early evenings (5pm - 9pm)  (3) ",218,166
+"16","wrktimechoice",4,"Late evenings (5pm - midnight)  (4) ",197,457
+"17","wrktimechoice",5,"Overnight (midnight - 5am)  (5) ",184,147
+"18","wrktimechoice",0,"Factor Level Not Chosen",NA,NA
+"19","wrkschedulestability",1,"No changes  (1) ",591,121
+"20","wrkschedulestability",2,"Some small changes  (2) ",194,151
+"21","wrkschedulestability",3,"Varying  (3) ",94,234
+"22","wrkschedulestability",4,"Unpredictable  (4) ",106,219
+"23","homelife",1,"Comfortable  (1) ",389,506
+"24","homelife",2,"Lonely  (2) ",97,96
+"25","homelife",3,"Active  (3) ",591,98
+"26","homelife",4,"Connected  (4) ",203,611
+"27","homelife",5,"Peaceful  (5) ",198,182
+"28","homelife",6,"Chaotic  (6) ",206,401
+"29","homelife",0,"Factor Level Not Chosen",NA,NA
+"30","mentalhealth",1,"Good  (1) ",485,357
+"31","mentalhealth",2,"Some challenges  (2) ",252,327
+"32","mentalhealth",3,"Significant challenges  (3) ",243,295
